@@ -160,6 +160,11 @@ func _build_battle() -> void:
 		_foe_icons.append(icon)
 		gauges[i].mouse_filter = Control.MOUSE_FILTER_PASS
 	_anchor = _make_label("Anchor", 50, NIGHT)
+	# Fixed HUD tiles must shrink immediately on rotation, even while the old font is cached.
+	for label: Label in [_anchor, _boss_name]:
+		label.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+		label.clip_text = true
+		label.max_lines_visible = 1
 	_anchor.draw.connect(_draw_anchor_mask)
 	_base_anchor_style = _plate(PAPER, PAPER, 2)
 	_anchor.add_theme_stylebox_override("normal", _base_anchor_style)
@@ -393,43 +398,65 @@ func _set_accessible(control: Control, title: String) -> void:
 			break
 
 
+func _is_compact_touch_landscape() -> bool:
+	if size.y > size.x:
+		return false
+	if OS.has_feature("web"):
+		var browser := JavaScriptBridge.get_interface("window")
+		return browser.matchMedia("(orientation: landscape) and (pointer: coarse) and (max-height: 600px)").matches
+	if OS.has_feature("mobile"):
+		var density := maxf(1.0, DisplayServer.screen_get_dpi() / 160.0)
+		return get_window().size.y / density <= 600.0
+	return false
+
+
 func _layout() -> void:
 	if not is_instance_valid(_effects):
 		return
 	_u = clampf(minf(size.x / 1152.0, size.y / 648.0), 0.48, 2.0)
 	var margin := roundf(16.0 * _u)
 	var gap := roundf(9.0 * _u)
+	var portrait := size.y > size.x
+	var compact := _is_compact_touch_landscape()
+	var split_hud := portrait or compact
 	var tall := size.y > size.x * 0.82
-	var top := roundf(size.y * (0.395 if tall else 0.414))
+	var arena_share := 0.395 if tall else 0.414
+	if split_hud:
+		arena_share = 0.46 if portrait else 0.445
+	var top := roundf(size.y * arena_share)
 	_arena = Rect2(margin, margin, size.x - margin * 2.0, top - margin - gap)
 	var content_h := size.y - top - margin
-	var available := size.x - 2.0 * margin - 2.0 * gap
-	var board_w := roundf(available * 0.407)
-	var lane_w := roundf(available * 0.348)
-	_left = Rect2(margin, top, board_w, content_h)
-	_lane = Rect2(_left.end.x + gap, top, lane_w, content_h)
-	_status = Rect2(_lane.end.x + gap, top, available - board_w - lane_w, content_h)
+	if split_hud:
+		var lower_w := _arena.size.x - gap
+		var lane_w := roundf(lower_w * 0.455)
+		var hud_h := roundf((content_h - gap) * (0.38 if portrait else 0.275))
+		_lane = Rect2(margin, top, lane_w, content_h)
+		_status = Rect2(_lane.end.x + gap, top, lower_w - lane_w, hud_h)
+		_left = Rect2(_status.position.x, _status.end.y + gap, _status.size.x, content_h - hud_h - gap)
+	else:
+		var lower_w := _arena.size.x - 2.0 * gap
+		var board_w := roundf(lower_w * 0.407)
+		var lane_w := roundf(lower_w * 0.348)
+		_left = Rect2(margin, top, board_w, content_h)
+		_lane = Rect2(_left.end.x + gap, top, lane_w, content_h)
+		_status = Rect2(_lane.end.x + gap, top, lower_w - board_w - lane_w, content_h)
 	_place(_result_flash, _left)
 	_place(_miss_flash, _lane)
 	_place(_weather, _lane.grow(-maxf(3.0, 5.0 * _u)))
 	_layout_arena(tall)
-	var padding := _left.size.x * 0.053
-	var header_height := clampf(_left.size.y * 0.095, 34.0 * _u, 50.0 * _u)
-	var spacing := roundf(maxf(4.0 * _u, board_w * 0.012))
-	var footer_space := clampf(content_h * 0.13, 49.0 * _u, 75.0 * _u)
-	var box := floorf(minf((board_w - 2.0 * padding - 2.0 * spacing) / 3.0,
-		(content_h - header_height - footer_space * 0.30 - 20.0 * _u - 2.0 * spacing) / 3.0))
-	var centre := _left.get_center() + Vector2(0.0, (header_height - footer_space * 0.55) * 0.5)
-	var anchor_rect := Rect2(centre - Vector2.ONE * box * 0.5, Vector2.ONE * box)
-	_place(_anchor, anchor_rect)
-	for action: String in _slots:
-		_place(_slots[action], Rect2(anchor_rect.position + SLOT_DIRECTIONS[action] * (box + spacing), anchor_rect.size))
-	_place(_reject, Rect2(_left.end - anchor_rect.size - Vector2.ONE * 10.0 * _u, anchor_rect.size))
-	_fall_size = floorf(minf(lane_w * 0.278, content_h * 0.23))
+	_layout_anchor_grid(compact)
+	_fall_size = floorf(minf(_lane.size.x * (0.30 if split_hud else 0.278), _lane.size.y * 0.23))
 	_fall_start = _lane.position.y + 8.0 * _u
 	_fall_end = _lane.end.y - 6.0 * _u
-	_layout_status()
-	_scale_fonts()
+	_energy_bar.vertical = not split_hud
+	_player_bar.vertical = not split_hud
+	if compact:
+		_layout_compact_status()
+	elif portrait:
+		_layout_portrait_status()
+	else:
+		_layout_status()
+	_scale_card_fonts()
 	_update_cards()
 	_effects.set_anchors(_anchor.get_rect().get_center(), _boss_art.get_rect().get_center(),
 		_player_bar.get_rect().get_center())
@@ -441,6 +468,23 @@ func _layout() -> void:
 		_foe_charge.get_rect(), _special.get_rect())
 	_center_modal()
 	queue_redraw()
+
+
+func _layout_anchor_grid(compact: bool) -> void:
+	var extent := minf(_left.size.x, _left.size.y)
+	var inset := roundf(extent * (0.035 if compact else 0.055))
+	var gap := roundf(maxf(4.0 * _u, extent * 0.014))
+	var side := floorf((extent - 2.0 * (inset + gap)) / 3.0)
+	var centre_tile := Rect2((_left.get_center() - Vector2.ONE * side * 0.5).round(), Vector2.ONE * side)
+	var step := side + gap
+	# Update the glyph's minimum size before fitting the tile when the device rotates.
+	_anchor.add_theme_font_size_override("font_size", maxi(20, int(side * 0.64)))
+	_place(_anchor, centre_tile)
+	for action: String in _slots:
+		if not _slots[action].text.is_empty():
+			_slots[action].add_theme_font_size_override("font_size", maxi(20, int(side * 0.57)))
+		_place(_slots[action], Rect2(centre_tile.position + SLOT_DIRECTIONS[action] * step, centre_tile.size))
+	_place(_reject, Rect2(centre_tile.position + Vector2.ONE * step, centre_tile.size))
 
 
 func _layout_arena(tall: bool) -> void:
@@ -477,6 +521,11 @@ func _layout_arena(tall: bool) -> void:
 	_place(_pause_face, Rect2(Vector2.ONE * ((pause_size - face_size) * 0.5), Vector2.ONE * face_size))
 	var body_top := head_y + header_h
 	var body_height := _arena.end.y - body_top - 6.0 * _u
+	var stacked_foe := size.y >= size.x * 1.45
+	_boss_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if stacked_foe else HORIZONTAL_ALIGNMENT_LEFT
+	if stacked_foe:
+		_layout_foe_above_gauges(body_top)
+		return
 	var art_w := _arena.size.x * (0.48 if tall else 0.40)
 	var art_left := _arena.position.x + _arena.size.x * (0.030 if tall else 0.080)
 	_place(_boss_art, Rect2(art_left, body_top, art_w, body_height))
@@ -485,7 +534,7 @@ func _layout_arena(tall: bool) -> void:
 	var title_h := minf(body_height * 0.245, 53.0 * _u)
 	var row_h := minf(body_height * 0.182, (54.0 if tall else 41.0) * _u)
 	var info_top := body_top + (body_height - title_h - 3.0 * row_h) * 0.5
-	_place(_boss_name, Rect2(info_x, info_top, info_w, title_h))
+	_place_boss_name(Rect2(info_x, info_top, info_w, title_h))
 	var gauges := [_boss_bar, _foe_charge, _foe_clock]
 	var icon := minf(row_h * 0.62, 25.0 * _u)
 	for i in range(gauges.size()):
@@ -494,6 +543,71 @@ func _layout_arena(tall: bool) -> void:
 		var bar_x := info_x + icon + 12.0 * _u
 		var bar_h := clampf(row_h * 0.43, 10.0 * _u, 19.0 * _u)
 		_place(gauges[i], Rect2(bar_x, row_y + (row_h - bar_h) * 0.5, info_x + info_w - bar_x, bar_h))
+
+
+func _layout_foe_above_gauges(body_top: float) -> void:
+	# Tall phones have more room for the boss above its statistics than beside them.
+	var w := _arena.size.x
+	var margin := roundf(w * 0.044)
+	var gap := roundf(w * 0.013)
+	var mark := roundf(w * 0.042)
+	var title_h := roundf(w * 0.060)
+	var stats_y := _arena.end.y - margin * 0.75 - mark
+	var title_y := stats_y - gap - title_h
+	_place(_boss_art, Rect2(_arena.position.x + margin * 0.5, body_top, w - margin * 1.5, title_y - body_top - gap))
+	_place_boss_name(Rect2(_arena.position.x + margin, title_y, w - 2.0 * margin, title_h))
+	var gauges := [_boss_bar, _foe_charge, _foe_clock]
+	var gutter := roundf(w * 0.032)
+	var cell_w := (w - 2.0 * (margin + gutter)) / 3.0
+	var bar_h := roundf(mark * 0.54)
+	for i in range(gauges.size()):
+		var x := _arena.position.x + margin + i * (cell_w + gutter)
+		_place(_foe_icons[i], Rect2(x, stats_y, mark, mark))
+		_place(gauges[i], Rect2(x + mark + gap, stats_y + (mark - bar_h) * 0.5, cell_w - mark - gap, bar_h))
+
+
+func _layout_compact_status() -> void:
+	var inset := maxf(5.0 * _u, _status.size.y * 0.075)
+	var area := _status.grow(-inset)
+	var gap := roundf(maxf(4.0 * _u, area.size.x * 0.012))
+	var side := floorf(minf(area.size.y, area.size.x * 0.115))
+	var y := roundf(area.get_center().y - side * 0.5)
+	_place(_special, Rect2(area.position.x, y, side, side))
+	# The full-height special and three inventory buttons remain easy to tap in a shallow strip.
+	var items_x := area.end.x - 3.0 * side - 2.0 * gap
+	for i in range(_item_buttons.size()):
+		_place(_item_buttons[i], Rect2(items_x + i * (side + gap), y, side, side))
+	var mark_size := roundf(side * 0.48)
+	var gauge_x := area.position.x + side + gap + mark_size + gap
+	var bag_x := items_x - gap - mark_size
+	var gauge_w := bag_x - gap - gauge_x
+	var gauge_h := maxf(4.0 * _u, roundf(side * 0.24))
+	var hp_y := y + side * 0.27
+	_place(_health_icon, Rect2(gauge_x - gap - mark_size, hp_y - mark_size * 0.5, mark_size, mark_size))
+	_place(_player_bar, Rect2(gauge_x, hp_y - gauge_h * 0.5, gauge_w, gauge_h))
+	_place(_energy_bar, Rect2(gauge_x, y + side * 0.74 - gauge_h * 0.5, gauge_w, gauge_h))
+	_place(_bag_icon, Rect2(bag_x, y + (side - mark_size) * 0.5, mark_size, mark_size))
+
+
+func _layout_portrait_status() -> void:
+	var inset := maxf(7.0 * _u, minf(_status.size.x, _status.size.y) * 0.040)
+	var area := _status.grow(-inset)
+	var gap := roundf(minf(area.size.x * 0.025, area.size.y * 0.035))
+	var side := floorf(minf((area.size.x - 3.0 * gap) / 4.0, (area.size.y - 2.0 * gap) / 3.0))
+	var top := roundf(area.get_center().y - (3.0 * side + 2.0 * gap) * 0.5)
+	var track_x := area.position.x + side + gap
+	var track_w := area.end.x - track_x
+	var track_h := roundf(side * 0.42)
+	for row in range(3):
+		var y := top + (side + gap) * row
+		if row == 2:
+			_place(_bag_icon, Rect2(area.position.x, y, side, side))
+			var item_gap := (track_w - 3.0 * side) * 0.5
+			for i in range(_item_buttons.size()):
+				_place(_item_buttons[i], Rect2(track_x + (side + item_gap) * i, y, side, side))
+		else:
+			_place(_health_icon if row == 0 else _special, Rect2(area.position.x, y, side, side))
+			_place(_player_bar if row == 0 else _energy_bar, Rect2(track_x, y + (side - track_h) * 0.5, track_w, track_h))
 
 
 func _layout_status() -> void:
@@ -521,9 +635,12 @@ func _layout_status() -> void:
 				_place(_item_buttons[j], Rect2(x - item_size * 0.5, track_y + (item_size + item_gap) * j, item_size, item_size))
 
 
-func _scale_fonts() -> void:
-	_boss_name.add_theme_font_size_override("font_size", int(_boss_name.size.y * 0.67))
-	_anchor.add_theme_font_size_override("font_size", maxi(20, int(_anchor.size.y * 0.64)))
+func _place_boss_name(box: Rect2) -> void:
+	_boss_name.add_theme_font_size_override("font_size", maxi(1, int(box.size.y * 0.67)))
+	_place(_boss_name, box)
+
+
+func _scale_card_fonts() -> void:
 	var glyph_size := maxi(20, int(_fall_size * 0.59))
 	for lane in range(_cards.size()):
 		_cards[lane].add_theme_font_size_override("font_size", glyph_size)
@@ -779,11 +896,8 @@ func _process(delta: float) -> void:
 				_show_tile_outcome(event)
 			"foe_launch":
 				_sounds.play_cue("foe_heavy" if bool(event.shot.heavy) else "foe_shot")
-				var target := _player_bar.get_rect().get_center()
-				match event.shot.effect.get("kind", ""):
-					"ink": target = _effects.ink_target
-					"incinerate": target = _effects.fire_target
-				_boss_art.on_fire(bool(event.shot.heavy), target - _boss_art.get_rect().get_center())
+				var aim := _player_bar.get_rect().get_center() - _boss_art.get_rect().get_center()
+				_boss_art.on_fire(bool(event.shot.heavy), aim)
 			"impact":
 				var foe := str(event.source) == "foe"
 				if foe:

@@ -58,7 +58,7 @@ func _check() -> void:
 	_expect(screen.run.tile_id != first_id and screen._cards[second_lane].get_meta("selected"), "Tap selects the other card")
 	screen._process(screen.run.fall_duration * 0.25)
 	_expect(screen._cards.all(func(card: Button) -> bool: return card.visible), "Three simultaneously visible cards")
-	for viewport_size in [Vector2(1280, 720), Vector2(1024, 768), Vector2(1280, 960), Vector2(657, 748), Vector2(1280, 1457), Vector2(390, 844)]:
+	for viewport_size in [Vector2(1280, 720), Vector2(1024, 768), Vector2(1280, 960), Vector2(657, 748), Vector2(1280, 1457), Vector2(390, 844), Vector2(820, 1180), Vector2(844, 390)]:
 		screen.size = viewport_size
 		_check_layout(screen, viewport_size)
 	screen.size = Vector2(1280, 720)
@@ -186,7 +186,7 @@ func _check() -> void:
 	screen.queue_free()
 	await create_timer(1.20).timeout
 	await process_frame
-	print("Midnight Chalk UI: input, pause, impacts, payout, 11 encounters and six layouts: ", "FAIL" if failed else "PASS")
+	print("Midnight Chalk UI: input, pause, impacts, payout, 11 encounters and eight layouts: ", "FAIL" if failed else "PASS")
 	quit(1 if failed else 0)
 
 
@@ -218,33 +218,55 @@ func _check_layout(screen, viewport_size: Vector2) -> void:
 	var left: Rect2 = screen._left
 	var lane: Rect2 = screen._lane
 	var status: Rect2 = screen._status
+	for panel in [screen._arena, left, lane, status]:
+		_expect(bounds.encloses(panel), "Battle panels fit the viewport")
 	var reject: Button = screen.get_node("Incompatible")
 	var note := " at %s" % viewport_size
-	_expect(left.encloses(reject.get_rect()) and reject.position.x > left.get_center().x and reject.position.y > left.get_center().y, "Reject stays at board lower right" + note)
-	_expect(lane.size.x < left.size.x and lane.size.y == left.size.y and screen._fall_end > lane.end.y - 10.0 * screen._u, "Lane uses full lower height" + note)
+	var down: Rect2 = screen._slots["bottom"].get_rect()
+	var right: Rect2 = screen._slots["right"].get_rect()
+	var anchor: Rect2 = screen._anchor.get_rect()
+	_expect(anchor.size.is_equal_approx(down.size) and anchor.size.is_equal_approx(right.size), "The centre character stays the same size as its grid cells after resize" + note)
+	_expect(left.encloses(reject.get_rect()) and is_equal_approx(reject.position.x, right.position.x) and is_equal_approx(reject.position.y, down.position.y), "Incompatible occupies the grid cell beside down and below right" + note)
 	for slot: Button in screen._slots.values():
-		_expect(left.encloses(slot.get_rect()) and not slot.get_rect().intersects(reject.get_rect()), "Placement and reject hit areas stay separate" + note)
+		_expect(left.encloses(slot.get_rect()) and not slot.get_rect().intersects(reject.get_rect()) and not slot.get_rect().intersects(anchor), "Centre, placement and incompatible tiles stay separate" + note)
 		_expect(slot.size == reject.size, "The incompatible button has the same square hit area as every placement button" + note)
 	for card: Button in screen._cards:
 		_expect(lane.encloses(card.get_rect()), "Cards stay inside lane" + note)
+	_expect(screen._fall_end > lane.end.y - 10.0 * screen._u, "Tiles fall to the foot of the lane" + note)
 	var hp: Rect2 = screen._player_bar.get_rect()
 	var energy: Rect2 = screen._energy_bar.get_rect()
 	var item1: Rect2 = screen._item_buttons[0].get_rect()
+	var item2: Rect2 = screen._item_buttons[1].get_rect()
 	var item3: Rect2 = screen._item_buttons[2].get_rect()
-	_expect(status.encloses(hp) and status.encloses(energy) and status.encloses(item3), "Resources fit in status column" + note)
-	_expect(hp.size.y > hp.size.x and energy.size.y > energy.size.x and energy.end.x < hp.position.x and hp.end.x < item1.position.x, "Heavy, health and items are three adjacent vertical tracks" + note)
-	_expect(absf(hp.position.y - item1.position.y) <= 1.0 and absf(hp.end.y - item3.end.y) <= 2.0, "Tops and bottoms of all three tracks align" + note)
+	for rect in [hp, energy, item1, item2, item3, screen._special.get_rect()]:
+		_expect(status.encloses(rect), "Player controls fit inside their panel" + note)
+	if viewport_size.y > viewport_size.x:
+		_expect(screen._arena.size.y > viewport_size.y * 0.40, "Portrait gives the boss a taller area" + note)
+		_expect(lane.position.y >= screen._arena.end.y and lane.end.x < status.position.x and lane.end.x < left.position.x, "Falling lane fills the left side below the boss" + note)
+		_expect(is_equal_approx(status.position.x, left.position.x) and is_equal_approx(status.end.x, left.end.x) and status.end.y < left.position.y, "Portrait status and anchor stack on the right" + note)
+		_expect(is_equal_approx(status.position.y, lane.position.y) and is_equal_approx(left.end.y, lane.end.y), "Portrait lower panels align with the lane" + note)
+		_expect(hp.size.x > hp.size.y and energy.size.x > energy.size.y and not screen._energy_bar.vertical and not screen._player_bar.vertical, "Both portrait gauges fill horizontally" + note)
+		_expect(not hp.intersects(energy) and item1.end.x < item2.position.x and item2.end.x < item3.position.x and is_equal_approx(item1.position.y, item3.position.y), "Three portrait inventory slots form a horizontal row" + note)
+	else:
+		_expect(left.end.x < lane.position.x and lane.end.x < status.position.x and is_equal_approx(lane.size.y, left.size.y), "Landscape keeps the anchor, lane and status in three columns" + note)
+		_expect(hp.size.y > hp.size.x and energy.size.y > energy.size.x and screen._energy_bar.vertical and screen._player_bar.vertical and energy.end.x < hp.position.x and hp.end.x < item1.position.x, "Landscape keeps the adjacent vertical tracks" + note)
+		_expect(absf(hp.position.y - item1.position.y) <= 1.0 and absf(hp.end.y - item3.end.y) <= 2.0, "Tops and bottoms of all three landscape tracks align" + note)
+	_expect(hp.has_point(screen._effects._player_target) and screen._anchor.get_rect().has_point(screen._effects._player_source), "Projectiles follow their controls after a resize" + note)
+	_expect(reject.get_rect().has_point(screen._effects._reject_centre) and screen._effects._energy_gauge == energy, "Energy transfers follow the current reject button and gauge" + note)
 	var header := [screen._stage_label, screen._wallet_icon, screen._wallet, screen._chest_icon, screen._chest_time]
 	_expect(screen._stage_label.get_theme_font("font").variation_embolden > 0.0 and screen._stage_label.position.x < viewport_size.x * 0.12, "Bold level starts the upper-left HUD" + note)
 	for i in range(1, header.size()):
 		_expect(header[i - 1].get_rect().end.x <= header[i].position.x and absf(header[i - 1].get_rect().get_center().y - header[i].get_rect().get_center().y) <= 1.5, "Level, purse and chest share one row in reading order" + note)
 	_expect(screen._chest_time.get_rect().end.x < viewport_size.x * 0.65 and screen._pause_button.position.x > viewport_size.x * 0.83, "HUD stays grouped on left, pause on right" + note)
-	_expect(bounds.encloses(screen._boss_art.get_rect()) and screen._boss_art.get_rect().end.x <= screen._boss_name.position.x, "Boss art and readout fit apart" + note)
+	var art: Rect2 = screen._boss_art.get_rect()
+	_expect(screen._arena.encloses(art) and not art.intersects(screen._boss_name.get_rect()), "Boss art and name fit apart inside the arena" + note)
+	if viewport_size == Vector2(390, 844):
+		_expect(art.size.x > screen._arena.size.x * 0.75 and art.end.y <= screen._boss_name.position.y, "The tall phone shows a large boss above its statistics")
 	_expect(screen._pause_button.size.x >= screen._pause_face.size.x * 1.66, "Pause keeps its generous invisible hit area")
 	_expect(screen._wallet.get_rect().end.x <= screen._pause_button.position.x, "Wallet does not overlap pause" + note)
 	for mark: Control in [screen._boss_bar, screen._foe_charge, screen._foe_clock]:
 		_expect(not mark.tooltip_text.is_empty(), "Unlabelled enemy bars expose accessible descriptions")
-		_expect(screen._arena.encloses(mark.get_rect()) and mark.size.x > mark.size.y, "Three distinct horizontal enemy gauges" + note)
+		_expect(screen._arena.encloses(mark.get_rect()) and not art.intersects(mark.get_rect()) and mark.size.x > mark.size.y, "Three horizontal gauges sit apart from the boss sprite" + note)
 
 
 func _verify_run_flow(screen) -> void:

@@ -1,5 +1,11 @@
 # Midnight Chalk boss sprites
 
+## Current battle portraits
+
+The battle loads 75 stage portraits from `stages/<family>/s1.png` through `s5.png` and one final dragon portrait from `stages/dark_dragon/s1.png`. ImageGen redrew the original designs at eye level with both eyes facing the player. Reference sheets kept each stage’s distinguishing equipment, crests and colours. Each silhouette is isolated on transparency, sampled onto the game’s 100 × 74 grid and indexed to its family palette. A small rightward shift across the pixel rows gives the stance a lead towards the player’s HP bar while the eyes stay level. Godot draws the sprites with nearest-neighbour sampling and adds the floor shadow, idle motion, firing lunge and hit reaction at runtime.
+
+## Original designs
+
 The original paper swallow, armoured guardian and bronze bell poses were produced for this project with the built-in ImageGen tool. Each transparent silhouette was isolated from the generated atlas, resampled onto a 100 × 74 grid, and mapped to a fixed family palette of 12 to 14 opaque colors. The base and rematch poses have separate sprites. Godot adds nearest-neighbour rendering, idle motion, recoil, a short impact tint and the floor shadow at runtime.
 
 ## Atlas generation prompt
@@ -12,7 +18,7 @@ The five-stage version adds a second transparent ImageGen atlas. The four poses 
 
 ## Fifteen five-stage families
 
-The current campaign uses 75 original images. Each family was generated as a separate five-form transparent sheet using built-in ImageGen. The shipped sprites are in `stages/<family>/s1.png` through `s5.png`. Each 100 × 74 image uses a transparent background and a shared family palette of up to 22 opaque colors. The game catalogue supplies the Traditional Chinese display names used for the atlas labels.
+Each family’s five original stage designs were generated as a transparent sheet using ImageGen. The game catalogue supplies their Traditional Chinese display names.
 
 ### Generation prompts
 
@@ -172,4 +178,4 @@ Five occupied cells in reading order:
 
 ## Final encounter
 
-燼夜黑龍 was generated separately with ImageGen as a transparent pixel-art sprite. The prompt called for a coiled Chinese dragon with a charcoal and indigo body, lavender edge lighting, antique-gold antlers, pale whiskers and an ember-orange belly. The final game sprite is a 100 × 74 RGBA image with 22 opaque palette entries in `stages/dark_dragon/s1.png`.
+燼夜黑龍 was generated separately with ImageGen as a transparent pixel-art sprite. The prompt called for a coiled Chinese dragon with a charcoal and indigo body, lavender edge lighting, antique-gold antlers, pale whiskers and an ember-orange belly. The current front-facing portrait preserves this silhouette and palette in `stages/dark_dragon/s1.png`.
