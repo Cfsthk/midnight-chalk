@@ -1,0 +1,6 @@
+.godot/
+.DS_Store
+.env
+.godot-export-credentials
+export_credentials.cfg
+build/
